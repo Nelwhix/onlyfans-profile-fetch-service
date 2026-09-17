@@ -1,0 +1,86 @@
+networks:
+    laravel:
+        driver: bridge
+
+services:
+    redis:
+        image: redis:8-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
+        networks:
+            - laravel
+        ports:
+            - '16379:6379'
+        volumes:
+            - redis-data:/data
+        healthcheck:
+            test: ['CMD', 'redis-cli', 'ping']
+            interval: 5s
+            timeout: 5s
+            retries: 5
+
+    migrate:
+        build:
+            context: ./docker
+            dockerfile: php.dockerfile
+        volumes:
+            - .:/var/www/html:delegated
+        environment:
+            REDIS_HOST: redis
+            REDIS_PORT: 6379
+        command: sh -c "[ -f .env ] || cp .env.example .env && composer install --no-interaction --no-progress && (grep -q '^APP_KEY=.\\+' .env || php artisan key:generate --force) && php artisan migrate --force"
+        depends_on:
+            redis:
+                condition: service_healthy
+        networks:
+            - laravel
+
+    php:
+        build:
+            context: ./docker
+            dockerfile: php.dockerfile
+        volumes:
+            - .:/var/www/html:delegated
+        environment:
+            REDIS_HOST: redis
+            REDIS_PORT: 6379
+            APP_URL: http://localhost:8080
+            ONLYFANS_BASE_URL: http://nginx
+        depends_on:
+            migrate:
+                condition: service_completed_successfully
+        networks:
+            - laravel
+
+    horizon:
+        build:
+            context: ./docker
+            dockerfile: php.dockerfile
+        volumes:
+            - .:/var/www/html:delegated
+        environment:
+            REDIS_HOST: redis
+            REDIS_PORT: 6379
+            APP_URL: http://localhost:8080
+            ONLYFANS_BASE_URL: http://nginx
+        command: sh -c "php artisan horizon"
+        depends_on:
+            migrate:
+                condition: service_completed_successfully
+        networks:
+            - laravel
+
+    nginx:
+        build:
+            context: ./docker
+            dockerfile: nginx.dockerfile
+        ports:
+            - "8080:80"
+        volumes:
+            - .:/var/www/html:delegated
+        depends_on:
+            - php
+        networks:
+            - laravel
+
+volumes:
+    redis-data:
+        driver: local
